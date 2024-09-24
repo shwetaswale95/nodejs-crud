@@ -11,82 +11,33 @@ const User = require("./model/user");
 const SECRET_KEY = "sk_test_51MSFMaSIDUaT83RH4vnhsd912OjOTu0H24F7JeBJocmKGdFZSonVLag0uxO25rPnAnICc1jNkNP2Eb9Io2U4bSHz00hQv8daDj";
 const stripe = require("stripe")(SECRET_KEY);
 const logger = require('./logger')
+const { Client } = require('@opensearch-project/opensearch');
 
-
-// Get all posts
-// router.get("/blog", async (req, res) => {
-// 	const posts = await Post.find()
-//   res.send({
-//     status: 200 , data: posts,
-//     success: true
-//   })
-//   logger.debug('This is the "/" route.')
-// })
-
-// Get all posts with optional search by title or content
-// router.get("/blog", async (req, res) => {
-//   try {
-//     const { search } = req.query; // Get the search query parameter
-
-//     let filter = {}; // Initialize an empty filter
-
-//     if (search) {
-//       // If a search query is provided, create a filter with regex for title and content
-//       filter = {
-//         $or: [
-//           { title: { $regex: search, $options: "i" } }, // Case-insensitive search for title
-//           { content: { $regex: search, $options: "i" } }, // Case-insensitive search for content
-//         ],
-//       };
-//     }
-
-//     // Find posts that match the filter
-//     const posts = await Post.find(filter);
-
-//     res.send({
-//       status: 200,
-//       data: posts,
-//       success: true,
-//     });
-
-//     logger.debug('Fetched posts with search query.');
-//   } catch (error) {
-//     res.status(500).send({
-//       status: 500,
-//       message: "Error fetching posts",
-//       success: false,
-//     });
-//     logger.error('Error fetching posts: ', error);
-//   }
-// });
+const openSearchClient = new Client({ node: 'http://localhost:9200' });
 
 router.get("/blog", async (req, res) => {
   try {
     // Extract query parameters
-    const { search, title, content, address, first_name, sortBy, sortOrder, page, limit } = req.query;
+    const { title, content, address, first_name, search, sortBy, sortOrder, page, limit } = req.query;
 
-    // Initialize filter and sorting options
-    let filter = {}; 
-    let sortOptions = {};
+    // MongoDB filtering based on specific fields
+    let filter = {};
 
-    // Create filters based on provided search parameters
+    // Support search across multiple fields (title, content, address, first_name)
     if (search) {
-      // Global search (on all fields)
-      filter = {
-        $or: [
-          { title: { $regex: search, $options: "i" } }, // Case-insensitive regex search
-          { content: { $regex: search, $options: "i" } },
-          { address: { $regex: search, $options: "i" } },
-          { first_name: { $regex: search, $options: "i" } },
-        ],
-      };
-    } else {
-      // Search based on specific fields (optional)
-      if (title) filter.title = { $regex: title, $options: "i" };
-      if (content) filter.content = { $regex: content, $options: "i" };
-      if (address) filter.address = { $regex: address, $options: "i" };
-      if (first_name) filter.first_name = { $regex: first_name, $options: "i" };
+      filter.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { content: { $regex: search, $options: "i" } },
+        { address: { $regex: search, $options: "i" } },
+        { first_name: { $regex: search, $options: "i" } },
+      ];
     }
+
+    // Apply individual field filters if provided
+    if (title) filter.title = { $regex: title, $options: "i" };
+    if (content) filter.content = { $regex: content, $options: "i" };
+    if (address) filter.address = { $regex: address, $options: "i" };
+    if (first_name) filter.first_name = { $regex: first_name, $options: "i" };
 
     // Set default pagination values
     const pageNumber = parseInt(page) || 1;
@@ -94,60 +45,114 @@ router.get("/blog", async (req, res) => {
     const skip = (pageNumber - 1) * pageSize;
 
     // Set sorting options (default: sort by creation date in descending order)
-    const sortField = sortBy || 'createdAt';
+    const sortField = sortBy || 'createdAt';  // Adjust field name as needed
     const sortDirection = sortOrder === 'asc' ? 1 : -1;
-    sortOptions[sortField] = sortDirection;
 
-    // Fetch posts with filters, pagination, and sorting
+    // Query MongoDB with filters, sorting, and pagination
     const posts = await Post.find(filter)
-                            .sort(sortOptions)
-                            .skip(skip)
-                            .limit(pageSize);
+      .sort({ [sortField]: sortDirection })
+      .skip(skip)
+      .limit(pageSize);
 
-    // Count total number of documents matching the filter (for pagination)
+    // Get total document count for pagination
     const totalDocuments = await Post.countDocuments(filter);
 
+    // Send response with MongoDB data
     res.send({
       status: 200,
       data: posts,
-      total: totalDocuments, // Total matching posts
+      total: totalDocuments,  // Total matching posts
       page: pageNumber,
       limit: pageSize,
       success: true,
     });
-
-    logger.debug('Fetched posts with OpenSearch and filters.');
   } catch (error) {
+    console.error('Error fetching posts: ', error);  // Log the detailed error
     res.status(500).send({
       status: 500,
       message: "Error fetching posts",
       success: false,
+      error: error.message,  // Add error message in the response
     });
-    logger.error('Error fetching posts: ', error);
   }
 });
-//sortBy=title&sortOrder=asc
+
+// router.get("/blog", async (req, res) => {
+//   try {
+//     // Extract query parameters
+//     const { title, content, address, first_name, sortBy, sortOrder, page, limit } = req.query;
+
+//     // MongoDB filtering based on specific fields
+//     let filter = {}; 
+//     if (title) filter.title = { $regex: title, $options: "i" };
+//     if (content) filter.content = { $regex: content, $options: "i" };
+//     if (address) filter.address = { $regex: address, $options: "i" };
+//     if (first_name) filter.first_name = { $regex: first_name, $options: "i" };
+
+//     // Set default pagination values
+//     const pageNumber = parseInt(page) || 1;
+//     const pageSize = parseInt(limit) || 10;
+//     const skip = (pageNumber - 1) * pageSize;
+
+//     // Set sorting options (default: sort by creation date in descending order)
+//     const sortField = sortBy || 'createdAt';  // Adjust field name as needed
+//     const sortDirection = sortOrder === 'asc' ? 1 : -1;
+
+//     // Query MongoDB with filters, sorting, and pagination
+//     const posts = await Post.find(filter)
+//       .sort({ [sortField]: sortDirection })
+//       .skip(skip)
+//       .limit(pageSize);
+
+//     // Get total document count for pagination
+//     const totalDocuments = await Post.countDocuments(filter);
+
+//     // Send response with MongoDB data
+//     res.send({
+//       status: 200,
+//       data: posts,
+//       total: totalDocuments,  // Total matching posts
+//       page: pageNumber,
+//       limit: pageSize,
+//       success: true,
+//     });
+//   } catch (error) {
+//     console.error('Error fetching posts: ', error);  // Log the detailed error
+//     res.status(500).send({
+//       status: 500,
+//       message: "Error fetching posts",
+//       success: false,
+//       error: error.message,  // Add error message in the response
+//     });
+//   }
+// });
+
 
 router.post("/blog", async (req, res) => {
   try {
-		const post = new Post({
-		title: req.body.title,
-		content: req.body.content,
-    address:req.body.address,
-    first_name:req.body.first_name
-	  })
-	  await post.save()
-    res.send({
-      status: 200 , message: "Record saved successfully.",
-      success: true
-    })
-	} catch {
-		res.status(400)
-    logger.error('erro while saving new data: ', error)
-    res.send({ status: 400 ,message: "Erro While Saving Record",
-      success: false })
-	}
-})
+    const post = new Post({
+      title: req.body.title,
+      content: req.body.content,
+      address: req.body.address,
+      first_name: req.body.first_name,
+    });
+    
+    await post.save();
+    
+    res.status(200).send({
+      message: "Record saved successfully.",
+      success: true,
+    });
+  } catch (error) {
+    logger.error('Error while saving new data: ', error);
+    res.status(500).send({
+      message: "Internal server error.",
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
 
 router.get("/blog/:id", async (req, res) => {
 	try {
