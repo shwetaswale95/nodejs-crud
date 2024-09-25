@@ -8,71 +8,67 @@ const COLLECTION_NAME = 'blogs';
 
 // OpenSearch connection details
 const OPENSEARCH_HOST = 'http://localhost:9200';
-const INDEX_NAME = 'blogs';
+const INDEX_NAME = 'blogs_v2';
 
 // Initialize OpenSearch client
 const openSearchClient = new Client({ node: OPENSEARCH_HOST });
 
 // Function to insert data into OpenSearch
 async function indexDataToOpenSearch(documents) {
-    const bulkOps = [];
+  const bulkOps = [];
 
-    // Prepare bulk operations for OpenSearch
-    documents.forEach((doc) => {
-        bulkOps.push({ index: { _index: INDEX_NAME } });   // Use MongoDB's _id as the document ID in OpenSearch
-        bulkOps.push(doc);  // The actual document data
+  documents.forEach((doc) => {
+    bulkOps.push({ index: { _index: INDEX_NAME, _id: doc._id } }); // Include _id here
+    bulkOps.push({
+      title: doc.title,
+      content: doc.content,
+      address: doc.address,
+      first_name: doc.first_name,
     });
+  });
 
-    console.log('Bulk Operations:');
-    console.log(JSON.stringify(bulkOps, null, 2));  // Log bulk operations to ensure correct data is being sent
+  console.log('Bulk Operations:', JSON.stringify(bulkOps, null, 2));
 
-    // Perform bulk indexing
-    const bulkResponse = await openSearchClient.bulk({
-      refresh: true,
-      body: bulkOps,
-    });
+  const bulkResponse = await openSearchClient.bulk({
+    refresh: true,
+    body: bulkOps,
+  });
 
-    // Check for errors in the bulk operation
-    if (bulkResponse.errors) {
-        bulkResponse.items.forEach(item => {
-          if (item.index && item.index.error) {
-            console.log('Error for document ID:', item.index._id);
-            console.log('Error details:', JSON.stringify(item.index.error, null, 2));
-          }
-        });
-      } else {
-        console.log('Successfully indexed documents to OpenSearch');
+  if (bulkResponse.errors) {
+    bulkResponse.items.forEach(item => {
+      if (item.index && item.index.error) {
+        console.error('Error for document ID:', item.index._id, 'Error details:', JSON.stringify(item.index.error, null, 2));
       }
-      
+    });
+  } else {
+    console.log('Successfully indexed documents to OpenSearch');
+  }
 }
-
 
 // Main function to fetch data from MongoDB and index into OpenSearch
 async function reindexMongoToOpenSearch() {
-    const client = new MongoClient(MONGO_URI);
+  const client = new MongoClient(MONGO_URI);
 
-    try {
-      // Connect to MongoDB
-      await client.connect();
-      const db = client.db(DATABASE_NAME);
-      const collection = db.collection(COLLECTION_NAME);
+  try {
+    // Connect to MongoDB
+    await client.connect();
+    const db = client.db(DATABASE_NAME);
+    const collection = db.collection(COLLECTION_NAME);
 
-      // Fetch all documents from the MongoDB collection
-      const documents = await collection.find({}).toArray();
+    // Fetch all documents from the MongoDB collection
+    const documents = await collection.find({}).toArray();
 
-      console.log(`Fetched ${documents.length} documents from MongoDB:::`);
-      console.log('**', JSON.stringify(documents, null, 2)); // Log the documents to see if they are fetched correctly
+    console.log(`Fetched ${documents.length} documents from MongoDB:`, JSON.stringify(documents, null, 2));
 
-      // Index documents into OpenSearch
-      await indexDataToOpenSearch(documents);
-    } catch (err) {
-      console.error('Error while reindexing:', err);
-    } finally {
-      // Close the MongoDB connection
-      await client.close();
-    }
+    // Index documents into OpenSearch
+    await indexDataToOpenSearch(documents);
+  } catch (err) {
+    console.error('Error while reindexing:', err);
+  } finally {
+    // Close the MongoDB connection
+    await client.close();
+  }
 }
-
 
 // Start the reindexing process
 reindexMongoToOpenSearch();

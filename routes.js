@@ -11,79 +11,207 @@ const User = require("./model/user");
 const SECRET_KEY = "sk_test_51MSFMaSIDUaT83RH4vnhsd912OjOTu0H24F7JeBJocmKGdFZSonVLag0uxO25rPnAnICc1jNkNP2Eb9Io2U4bSHz00hQv8daDj";
 const stripe = require("stripe")(SECRET_KEY);
 const logger = require('./logger')
+// OpenSearch connection details
 const { Client } = require('@opensearch-project/opensearch');
 
+// Initialize OpenSearch client
 const openSearchClient = new Client({ node: 'http://localhost:9200' });
+const INDEX_NAME = 'blogs_v2';
 
-router.get("/blog", async (req, res) => {
+router.get('/search-blog', async (req, res) => {
   try {
-    // Extract query parameters
-    const { title, content, address, first_name, search, sortBy, sortOrder, page, limit } = req.query;
+    const { search = '', page = 1, limit = 10, sortBy = 'title', sortOrder = 'asc' } = req.query;
 
-    // MongoDB filtering based on specific fields
-    let filter = {};
+    // Parse pagination parameters
+    const pageNumber = parseInt(page, 10) || 1;
+    const pageSize = parseInt(limit, 10) || 10;
+    const from = (pageNumber - 1) * pageSize;
 
-    // Support search across multiple fields (title, content, address, first_name)
-    if (search) {
-      filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { content: { $regex: search, $options: "i" } },
-        { address: { $regex: search, $options: "i" } },
-        { first_name: { $regex: search, $options: "i" } },
-      ];
+    // Initialize search query
+    let searchQuery;
+
+    if (search.trim() === '') {
+      searchQuery = {
+        index: INDEX_NAME,
+        body: {
+          query: {
+            match_all: {}
+          },
+          from,
+          size: pageSize,
+          sort: [
+            {
+              [`${sortBy}.keyword`]: {  // Change to sort on the keyword field
+                order: sortOrder === 'asc' ? 'asc' : 'desc',
+              },
+            },
+          ],
+        },
+      };
+    } else {
+      searchQuery = {
+        index: INDEX_NAME,
+        body: {
+          query: {
+            bool: {
+              must: [
+                {
+                  multi_match: {
+                    query: search,
+                    fields: ['title', 'content', 'address', 'first_name'],
+                    fuzziness: 'auto',
+                  },
+                },
+              ],
+            },
+          },
+          sort: [
+            {
+              [`${sortBy}.keyword`]: {  // Change to sort on the keyword field
+                order: sortOrder === 'asc' ? 'asc' : 'desc',
+              },
+            },
+          ],
+          from,
+          size: pageSize,
+        },
+      };
     }
 
-    // Apply individual field filters if provided
-    if (title) filter.title = { $regex: title, $options: "i" };
-    if (content) filter.content = { $regex: content, $options: "i" };
-    if (address) filter.address = { $regex: address, $options: "i" };
-    if (first_name) filter.first_name = { $regex: first_name, $options: "i" };
-
-    // Set default pagination values
-    const pageNumber = parseInt(page) || 1;
-    const pageSize = parseInt(limit) || 10;
-    const skip = (pageNumber - 1) * pageSize;
-
-    // Set sorting options (default: sort by creation date in descending order)
-    const sortField = sortBy || 'createdAt';  // Adjust field name as needed
-    const sortDirection = sortOrder === 'asc' ? 1 : -1;
-
-    // Query MongoDB with filters, sorting, and pagination
-    const posts = await Post.find(filter)
-      .sort({ [sortField]: sortDirection })
-      .skip(skip)
-      .limit(pageSize);
-
-    // Get total document count for pagination
-    const totalDocuments = await Post.countDocuments(filter);
-
-    // Send response with MongoDB data
-    res.send({
+    const result = await openSearchClient.search(searchQuery);
+    const hits = result.body.hits.hits.map(hit => hit._source);
+    const total = result.body.hits.total.value;
+    console.log('****', hits)
+    res.status(200).json({
       status: 200,
-      data: posts,
-      total: totalDocuments,  // Total matching posts
+      data: hits,
+      total,
       page: pageNumber,
       limit: pageSize,
       success: true,
     });
   } catch (error) {
-    console.error('Error fetching posts: ', error);  // Log the detailed error
-    res.status(500).send({
+    console.error('Error fetching data from OpenSearch:', error);
+    res.status(500).json({
       status: 500,
-      message: "Error fetching posts",
+      message: 'Error fetching data from OpenSearch',
       success: false,
-      error: error.message,  // Add error message in the response
+      error: error.message,
     });
   }
 });
 
+
+
+
+
+// GET /api/search-blog?search=query&page=1&limit=10&sortBy=field&sortOrder=asc
+// router.get('/search-blog', async (req, res) => {
+//   try {
+//     const { search = '', page = 1, limit = 10, sortBy = 'title', sortOrder = 'asc' } = req.query;
+
+//     // Parse pagination parameters
+//     const pageNumber = parseInt(page, 10) || 1;
+//     const pageSize = parseInt(limit, 10) || 10;
+//     const from = (pageNumber - 1) * pageSize;
+
+//     // Validate search query
+//     if (!search) {
+//       return res.status(400).json({
+//         status: 400,
+//         message: 'Search query cannot be empty.',
+//         success: false,
+//       });
+//     }
+
+//     // Validate sort field
+//     const validSortFields = ['title', 'content', 'address', 'first_name'];
+//     if (!validSortFields.includes(sortBy)) {
+//       return res.status(400).json({
+//         status: 400,
+//         message: `Invalid sort field: ${sortBy}`,
+//         success: false,
+//       });
+//     }
+
+//     // Build OpenSearch query
+//     const searchQuery = {
+//       index: INDEX_NAME,
+//       body: {
+//         query: {
+//           bool: {
+//             must: [
+//               {
+//                 multi_match: {
+//                   query: search,
+//                   fields: ['title', 'content', 'address', 'first_name'],
+//                   fuzziness: 'auto',
+//                 },
+//               },
+//             ],
+//           },
+//         },
+//         sort: [
+//           {
+//             [sortBy]: {
+//               order: sortOrder === 'asc' ? 'asc' : 'desc',
+//             },
+//           },
+//         ],
+//         from,
+//         size: pageSize,
+//       },
+//     };
+
+//     console.log('Search Query:', JSON.stringify(searchQuery, null, 2)); // Log query for debugging
+
+//     // Perform search
+//     const result = await openSearchClient.search(searchQuery);
+
+//     const hits = result.body.hits.hits.map(hit => hit._source);
+//     const total = result.body.hits.total; // Adjust based on OpenSearch version
+
+//     // Send response
+//     res.status(200).json({
+//       status: 200,
+//       data: hits,
+//       total,
+//       page: pageNumber,
+//       limit: pageSize,
+//       success: true,
+//     });
+//   } catch (error) {
+//     console.error('Error fetching data from OpenSearch:', error);
+//     res.status(500).json({
+//       status: 500,
+//       message: 'Error fetching data from OpenSearch',
+//       success: false,
+//       error: error.message,
+//     });
+//   }
+// });
+
+
+
 // router.get("/blog", async (req, res) => {
 //   try {
 //     // Extract query parameters
-//     const { title, content, address, first_name, sortBy, sortOrder, page, limit } = req.query;
+//     const { title, content, address, first_name, search, sortBy, sortOrder, page, limit } = req.query;
 
 //     // MongoDB filtering based on specific fields
-//     let filter = {}; 
+//     let filter = {};
+
+//     // Support search across multiple fields (title, content, address, first_name)
+//     if (search) {
+//       filter.$or = [
+//         { title: { $regex: search, $options: "i" } },
+//         { content: { $regex: search, $options: "i" } },
+//         { address: { $regex: search, $options: "i" } },
+//         { first_name: { $regex: search, $options: "i" } },
+//       ];
+//     }
+
+//     // Apply individual field filters if provided
 //     if (title) filter.title = { $regex: title, $options: "i" };
 //     if (content) filter.content = { $regex: content, $options: "i" };
 //     if (address) filter.address = { $regex: address, $options: "i" };
